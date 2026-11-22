@@ -184,8 +184,13 @@ function touch(im){ im.updatedAt = new Date().toISOString(); persist(); refreshS
 $('btnOpen').onclick = () => $('fileImg').click();
 $('fileImg').onchange = e => { loadFiles([...e.target.files]); e.target.value=''; };
 const stage = $('stage');
-stage.addEventListener('dragover', e => { e.preventDefault(); });
-stage.addEventListener('drop', e => { e.preventDefault(); loadFiles([...e.dataTransfer.files].filter(f=>f.type.startsWith('image/'))); });
+// Accept drops anywhere on the page; otherwise the browser opens the image itself and leaves the app.
+window.addEventListener('dragover', e => { e.preventDefault(); if(e.dataTransfer) e.dataTransfer.dropEffect='copy'; });
+window.addEventListener('drop', e => {
+  e.preventDefault();
+  const files=[...(e.dataTransfer?e.dataTransfer.files:[])].filter(f=>!f.type || f.type.startsWith('image/') || /\.(png|jpe?g|bmp|gif|webp|tiff?)$/i.test(f.name));
+  if (files.length) loadFiles(files);
+});
 
 async function loadFiles(files){
   for (const f of files){
