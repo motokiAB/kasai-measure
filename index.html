@@ -97,7 +97,7 @@ th:first-child,td:first-child{text-align:left}
     <section id="secMeta">
       <h2>2. 症例情報</h2>
       <div class="grid2">
-        <span>症例ID</span><input type="text" id="caseId" placeholder="例: K01（氏名・ID不可）">
+        <span>症例</span><select id="caseId"></select>
         <span>画像ラベル</span><input type="text" id="imgLabel" placeholder="例: 1枚目">
         <span>メモ</span><input type="text" id="note" placeholder="任意">
       </div>
@@ -230,14 +230,25 @@ async function loadFiles(files){
 function select(i){
   S.cur=i; S.draft=[]; S.sel=null;
   const im=curImg();
-  $('caseId').value=im?im.caseId:''; $('imgLabel').value=im?im.label:''; $('note').value=im?im.note:'';
+  caseOptions(); $('imgLabel').value=im?im.label:''; $('note').value=im?im.note:'';
   fit(); refreshSide(); draw();
 }
 
 // ---------- meta inputs ----------
 $('rater').oninput = e => { S.rater=e.target.value.trim(); persist(); };
 $('lrmap').onchange = e => { S.lrmap=e.target.value; persist(); refreshSide(); draw(); };
-for (const [id,k] of [['caseId','caseId'],['imgLabel','label'],['note','note']])
+// case selector: 症例01, 02, ... = operations numbered in order (redo surgeries get their own number)
+const CASE_MAX = 18;   // 18 operations as of 2026-11-22; raise when cases are added
+function caseOptions(){
+  const sel=$('caseId'), im=curImg(), cur=im?im.caseId:'';
+  const used=new Set(S.images.filter(x=>x!==im && x.caseId && x.anast).map(x=>x.caseId));
+  const ids=[]; for(let n=1;n<=CASE_MAX;n++) ids.push('症例'+String(n).padStart(2,'0'));
+  if (cur && !ids.includes(cur)) ids.unshift(cur);   // keep older free-text values
+  sel.innerHTML='<option value="">― 選択してください ―</option>'+ids.map(v=>`<option value="${v}">${v}${used.has(v)?'（計測済の画像あり）':''}</option>`).join('');
+  sel.value=cur;
+}
+$('caseId').onchange = e => { const im=curImg(); if(!im) return; im.caseId=e.target.value; im.updatedAt=new Date().toISOString(); persist(); refreshSide(); };
+for (const [id,k] of [['imgLabel','label'],['note','note']])
   $(id).oninput = e => { const im=curImg(); if(!im) return; im[k]=e.target.value; im.updatedAt=new Date().toISOString(); persist(); refreshList(); };
 
 // ---------- modes ----------
@@ -546,7 +557,7 @@ function refreshList(){
   const ul=$('imgList'); ul.innerHTML='';
   S.images.forEach((im,i)=>{
     const li=document.createElement('li'); if(i===S.cur) li.className='cur';
-    const nm=document.createElement('span'); nm.textContent = (im.caseId? `${im.caseId}${im.label?' / '+im.label:''}` : '(症例ID未入力)') ; nm.title=im.name;
+    const nm=document.createElement('span'); nm.textContent = (im.caseId? `${im.caseId}${im.label?' / '+im.label:''}` : '(症例未選択)') ; nm.title=im.name;
     const st=document.createElement('span'); const done=im.anast && im.paren.length && im.caseId;
     st.className='st'+(done?' done':''); st.textContent = done? '計測済' : im.anast? '作図中' : '未計測';
     li.append(nm,st); li.onclick=()=>select(i); ul.append(li);
@@ -577,7 +588,7 @@ function refreshSide(){
     <tr><th>全体</th><th>${fmtP(r.ratio.total)}</th><th>${fmtA(r.parenTotal)}</th><th>${fmtA(r.anastTotal)}</th></tr>
   </table>
   <p class="muted" style="margin:6px 0 0">左右は「${$('lrmap').selectedOptions[0].textContent}」の設定で患者側に変換。吻合範囲外の露出実質 ${fmtA(r.outside)} px² は比率に含めていません。</p>
-  ${!im.caseId? '<p class="warn">症例IDが未入力です。</p>':''}`;
+  ${!im.caseId? '<p class="warn">症例が未選択です。</p>':''}`;
 }
 function axisAngle(im){ const [ux,uy]=axisVec(im); return Math.atan2(uy,ux)*180/Math.PI; }
 
@@ -602,7 +613,7 @@ $('btnCsv').onclick = () => {
       Math.round(r.parenTotal), Math.round(r.anastTotal), Math.round(r.outside), im.note, APP_VERSION]);
   }
   if (!rows.length){ alert('吻合範囲が描かれた画像がありません。'); return; }
-  if (miss.length && !confirm(`症例IDが未入力の画像が ${miss.length} 枚あります。このまま出力しますか？`)) return;
+  if (miss.length && !confirm(`症例が未選択の画像が ${miss.length} 枚あります。このまま出力しますか？`)) return;
   const head=['rater_id','case_id','image_label','measured_at','image_w','image_h','lr_mapping','axis_angle_deg','n_parenchyma_regions',
     'ratio_L','ratio_C','ratio_R','ratio_LR','ratio_total',
     'paren_px_L','anast_px_L','paren_px_C','anast_px_C','paren_px_R','anast_px_R',
