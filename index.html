@@ -109,10 +109,16 @@ th:first-child,td:first-child{text-align:left}
         <button id="mPan" data-mode="pan">移動のみ</button>
       </div>
       <div class="row" style="margin-top:6px">
-        <button id="btnUndo">1点戻す</button>
+        <button id="btnUndo" title="Ctrl+Z / ⌘Z">↶ 元に戻す</button>
+        <button id="btnRedo" title="Ctrl+Shift+Z / ⌘⇧Z">↷ やり直す</button>
+        <button id="btnDelSel" disabled>選択した領域を削除</button>
+      </div>
+      <div class="row" style="margin-top:6px">
         <button id="btnFit">全体表示</button>
         <button id="btnClearAxis">左右軸を消す</button>
+        <button id="btnClearAll">この画像の作図を全消去</button>
       </div>
+      <p class="muted" style="margin:6px 0 0">領域の選択：「頂点の修正」モードで領域の内側をクリック、または下の一覧の「削除」。</p>
       <ul id="polyList"></ul>
     </section>
     <section>
@@ -176,9 +182,16 @@ function applyAnn(im, a){
   if (!a) return;
   im.caseId=a.caseId||''; im.label=a.label||''; im.note=a.note||'';
   im.anast=a.anast||null; im.paren=a.paren||[]; im.axis=a.axis||null; im.updatedAt=a.updatedAt||null;
+  im.hist=[]; im.redo=[]; im.lastSnap=geom(im);
 }
+// ---------- undo / redo (geometry snapshots per image) ----------
+function geom(im){ return JSON.stringify({anast:im.anast, paren:im.paren, axis:im.axis}); }
+function setGeom(im, snap){ const g=JSON.parse(snap); im.anast=g.anast; im.paren=g.paren||[]; im.axis=g.axis; im.lastSnap=snap; }
 const curImg = () => S.images[S.cur] || null;
-function touch(im){ im.updatedAt = new Date().toISOString(); persist(); refreshSide(); draw(); }
+function touch(im){
+  const now=geom(im);
+  if (now!==im.lastSnap){ im.hist.push(im.lastSnap); if(im.hist.length>200) im.hist.shift(); im.redo=[]; im.lastSnap=now; }
+  im.updatedAt = new Date().toISOString(); persist(); refreshSide(); draw(); }
 
 // ---------- image loading ----------
 $('btnOpen').onclick = () => $('fileImg').click();
@@ -199,7 +212,8 @@ async function loadFiles(files){
     const key = `${f.name}|${f.size}|${bmp.width}x${bmp.height}`;
     let idx = S.images.findIndex(x=>x.key===key);
     if (idx<0){
-      const im = { key, name:f.name, w:bmp.width, h:bmp.height, bmp, caseId:'', label:'', note:'', anast:null, paren:[], axis:null, updatedAt:null };
+      const im = { key, name:f.name, w:bmp.width, h:bmp.height, bmp, caseId:'', label:'', note:'', anast:null, paren:[], axis:null, updatedAt:null, hist:[], redo:[], lastSnap:null };
+      im.lastSnap=geom(im);
       applyAnn(im, saved.ann && saved.ann[key]);
       S.images.push(im); idx = S.images.length-1;
     } else S.images[idx].bmp = bmp;
@@ -224,12 +238,24 @@ const modeBtns = [...document.querySelectorAll('[data-mode]')];
 modeBtns.forEach(b => b.onclick = () => setMode(b.dataset.mode));
 function setMode(m){ S.mode=m; S.draft=[]; modeBtns.forEach(b=>b.classList.toggle('on', b.dataset.mode===m)); hint(); draw(); }
 $('btnUndo').onclick = undo;
+$('btnRedo').onclick = redo;
+$('btnDelSel').onclick = () => { if(S.sel) deletePoly(S.sel); };
+$('btnClearAll').onclick = () => { const im=curImg(); if(!im) return;
+  if(!confirm('この画像の吻合範囲・露出実質・左右軸をすべて消去しますか？（「元に戻す」で復元できます）')) return;
+  im.anast=null; im.paren=[]; im.axis=null; S.draft=[]; S.sel=null; touch(im); };
 $('btnFit').onclick = () => { fit(); draw(); };
 $('btnClearAxis').onclick = () => { const im=curImg(); if(im&&im.axis){ im.axis=null; touch(im);} };
 function undo(){
   const im=curImg(); if(!im) return;
-  if (S.draft.length){ S.draft.pop(); draw(); hint(); return; }
+  if (S.draft.length){ S.draft=[]; draw(); hint(); return; }   // discard the outline being drawn
+  if (!im.hist.length) return;
+  im.redo.push(im.lastSnap); setGeom(im, im.hist.pop()); afterHist(im);
 }
+function redo(){
+  const im=curImg(); if(!im || !im.redo.length) return;
+  im.hist.push(im.lastSnap); setGeom(im, im.redo.pop()); afterHist(im);
+}
+function afterHist(im){ S.sel=null; S.draft=[]; im.updatedAt=new Date().toISOString(); persist(); refreshSide(); draw(); }
 function hint(){
   const t = {
     anast:'吻合範囲：ドラッグで輪郭をなぞり、離すと閉じます（クリックで点を打つ方法も可）',
@@ -318,11 +344,11 @@ function draw(){
   const lw = 1.6/S.view.s;
   const poly = (p,close=true) => { ctx.beginPath(); p.forEach((q,i)=> i? ctx.lineTo(q[0],q[1]) : ctx.moveTo(q[0],q[1])); if(close) ctx.closePath(); };
   // parenchyma
-  im.paren.forEach((p,i) => { poly(p); ctx.fillStyle='rgba(255,210,63,.35)'; ctx.fill(); ctx.lineWidth=lw*(S.sel&&S.sel.t==='paren'&&S.sel.i===i?2.2:1); ctx.strokeStyle=COL.paren; ctx.stroke(); });
+  im.paren.forEach((p,i) => { poly(p); ctx.lineWidth=lw*(S.sel&&S.sel.t==='paren'&&S.sel.i===i?2.6:1.3); ctx.strokeStyle=COL.paren; ctx.stroke(); });
   // anastomosis + thirds
   if (im.anast){
-    poly(im.anast); ctx.fillStyle='rgba(56,198,244,.10)'; ctx.fill();
-    ctx.lineWidth=lw*(S.sel&&S.sel.t==='anast'?2.2:1.3); ctx.strokeStyle=COL.anast; ctx.stroke();
+    poly(im.anast);
+    ctx.lineWidth=lw*(S.sel&&S.sel.t==='anast'?2.6:1.3); ctx.strokeStyle=COL.anast; ctx.stroke();
     if (im.anast.length>=3){
       const [ux,uy]=axisVec(im), vx=-uy, vy=ux;
       let tmin=Infinity,tmax=-Infinity,smin=Infinity,smax=-Infinity;
@@ -454,7 +480,9 @@ window.addEventListener('keydown', e => {
   if (e.code==='Space'){ S.space=true; e.preventDefault(); return; }
   if (e.key==='Escape'){ S.draft=[]; draw(); }
   else if (e.key==='Enter'){ closeDraft(); }
-  else if ((e.key==='z'&&(e.ctrlKey||e.metaKey)) || e.key==='Backspace'){ if(S.draft.length){ e.preventDefault(); undo(); } }
+  else if ((e.key==='z'||e.key==='Z')&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); if(e.shiftKey) redo(); else if(S.draft.length){ S.draft.pop(); draw(); } else undo(); return; }
+  else if (e.key==='y'&&(e.ctrlKey||e.metaKey)){ e.preventDefault(); redo(); return; }
+  else if (e.key==='Backspace' && S.draft.length){ e.preventDefault(); S.draft.pop(); draw(); return; }
   if ((e.key==='Delete'||e.key==='Backspace') && !S.draft.length && S.sel && im){
     e.preventDefault(); deletePoly(S.sel);
   }
@@ -482,6 +510,7 @@ function refreshList(){
 }
 function refreshSide(){
   refreshList();
+  { const im=curImg(); $('btnDelSel').disabled=!S.sel; $('btnRedo').disabled=!(im&&im.redo.length); }
   const im=curImg(); const pl=$('polyList'); pl.innerHTML='';
   if (im){
     const add=(label,sel,color,area)=>{ const li=document.createElement('li');
