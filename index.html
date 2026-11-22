@@ -122,7 +122,9 @@ th:first-child,td:first-child{text-align:left}
     <section>
       <h2>使い方</h2>
       <ol class="muted" style="margin:0;padding-left:18px">
-        <li>モードを選び、輪郭をクリックで点を打つ。最初の点をクリック、ダブルクリック、または Enter で閉じる。Esc で描きかけを破棄。</li>
+        <li>モードを選び、マウス（またはペン）を押したまま輪郭をなぞる。離すと始点と結ばれて閉じます。</li>
+        <li>クリックで点を打っていく方法も使えます（最初の点クリック／ダブルクリック／Enter で閉じる）。クリックとドラッグは混ぜて使えます。Esc で描きかけを破棄。</li>
+        <li>描いた後の微修正は「頂点の修正」で。</li>
         <li>露出実質は複数の領域を描けます（合算されます）。吻合範囲の外にはみ出た部分は比率に含めません。</li>
         <li>吻合範囲は左右方向に3等分（左・中央・右）されます。既定では画像の水平方向。肝門の向きが傾いている場合は「左右軸」で画像左側→右側の順に2点クリック。</li>
         <li>ホイールで拡大縮小、右ドラッグ／スペース＋ドラッグで移動。</li>
@@ -225,8 +227,8 @@ function undo(){
 }
 function hint(){
   const t = {
-    anast:'吻合範囲：輪郭をクリックで点を追加 → 最初の点クリック／ダブルクリック／Enterで閉じる',
-    paren:'露出実質：輪郭をクリックで点を追加 → 閉じる。複数描けます',
+    anast:'吻合範囲：ドラッグで輪郭をなぞり、離すと閉じます（クリックで点を打つ方法も可）',
+    paren:'露出実質：ドラッグで輪郭をなぞり、離すと閉じます。複数描けます',
     axis:'左右軸：画像の左側の点 → 右側の点 の順に2点クリック',
     edit:'頂点の修正：頂点をドラッグで移動。領域をクリックで選択し Delete で削除。辺をダブルクリックで頂点追加、頂点を Alt+クリックで削除',
     pan:'移動のみ：ドラッグで移動、ホイールで拡大縮小'
@@ -394,20 +396,32 @@ cv.addEventListener('pointerdown', e => {
     if (S.draft.length===2){ im.axis=S.draft; S.draft=[]; touch(im); setMode('anast'); }
     draw(); return;
   }
-  // polygon drawing
+  // polygon drawing (click = add vertex, drag = freehand trace)
   if (S.draft.length>=3){ const f=toScr(S.draft[0]); if(Math.hypot(f[0]-sp[0],f[1]-sp[1])<=9){ closeDraft(); return; } }
-  S.draft.push(ip); draw();
+  S.free = { startLen:S.draft.length, last:sp, moved:0 };
+  S.draft.push(ip); S.hover=null; draw();
 });
 cv.addEventListener('pointermove', e => {
   const im=curImg(); if(!im) return;
   const sp=evPos(e);
   if (panStart){ S.view.ox=panStart.ox+sp[0]-panStart.sp[0]; S.view.oy=panStart.oy+sp[1]-panStart.sp[1]; draw(); return; }
   if (S.drag){ const arr=getArr(im,S.drag); arr[S.drag.j]=toImg(...sp); draw(); return; }
+  if (S.free){
+    const d=Math.hypot(sp[0]-S.free.last[0], sp[1]-S.free.last[1]);
+    if (d>=2){ S.draft.push(toImg(...sp)); S.free.last=sp; S.free.moved+=d; draw(); }
+    return;
+  }
   if (S.draft.length){ S.hover=toImg(...sp); draw(); } else S.hover=null;
 });
 cv.addEventListener('pointerup', e => {
   if (panStart){ panStart=null; return; }
   if (S.drag){ S.drag=null; touch(curImg()); }
+  if (S.free){
+    const f=S.free; S.free=null;
+    // a drag started on an empty draft is a complete lasso: close it on release
+    if (f.moved>=8 && f.startLen===0 && S.draft.length>=3) closeDraft();
+    draw();
+  }
 });
 cv.addEventListener('dblclick', e => {
   const im=curImg(); if(!im) return;
