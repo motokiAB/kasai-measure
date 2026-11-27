@@ -81,6 +81,7 @@ th:first-child,td:first-child{text-align:left}
     <button id="btnCsv" class="primary">CSV出力</button>
     <button id="btnJson">作図データ保存</button>
     <button id="btnJsonLoad">作図データ読込</button>
+    <button id="btnFixLoad" title="合議で確定した吻合範囲（作図データ保存で作ったJSON）を読み込み、固定します">確定吻合範囲を読込（固定）</button>
   </span>
 </header>
 <main>
@@ -141,6 +142,7 @@ th:first-child,td:first-child{text-align:left}
         <li>領域の上で右クリック →「削除」で、その領域を消せます。「元に戻す」で復元可。</li>
         <li>ホイールで拡大縮小、右ドラッグ／スペース＋ドラッグで移動。</li>
         <li>作業内容（座標のみ）はこのブラウザに自動保存されます。別のPCへ移すときは「作図データ保存」。</li>
+        <li><b>再計測（吻合範囲を固定する方式）</b>：合議で描いた吻合範囲を「作図データ保存」したJSONを、各測定者が「確定吻合範囲を読込（固定）」で読み込みます。画像を開くと吻合範囲・左右軸・症例番号が固定され（一覧に🔒）、露出実質だけを描けます。</li>
       </ol>
     </section>
   </aside>
@@ -153,11 +155,12 @@ th:first-child,td:first-child{text-align:left}
 <div id="ctxMenu"></div>
 <input type="file" id="fileImg" accept="image/*" multiple hidden>
 <input type="file" id="fileJson" accept="application/json,.json" hidden>
+<input type="file" id="fileFix" accept="application/json,.json" hidden>
 
 <script>
 (() => {
 'use strict';
-const APP_VERSION = '1.0';
+const APP_VERSION = '1.1';
 const STORE_KEY = 'kasaiHilarMeasure.v1';
 const COL = { anast:'#38c6f4', paren:'#ffd23f', axis:'#ff6bd6', draft:'#ffffff', third:'#ffffff' };
 const $ = id => document.getElementById(id);
@@ -170,7 +173,7 @@ const S = {
   cur:-1, mode:'anast', draft:[], hover:null,
   view:{s:1,ox:0,oy:0}, sel:null, drag:null, space:false
 };
-let saved = { rater:'', lrmap:'imgLeft=patRight', ann:{} };
+let saved = { rater:'', lrmap:'imgLeft=patRight', ann:{}, fixed:{}, fixedSrc:'' };
 try { const t = localStorage.getItem(STORE_KEY); if (t) saved = Object.assign(saved, JSON.parse(t)); } catch(e) {}
 S.rater = saved.rater || ''; S.lrmap = saved.lrmap || S.lrmap;
 $('rater').value = S.rater; $('lrmap').value = S.lrmap;
@@ -178,7 +181,7 @@ $('rater').value = S.rater; $('lrmap').value = S.lrmap;
 function persist(){
   const ann = saved.ann || {};
   for (const im of S.images) ann[im.key] = annOf(im);
-  saved = { rater:S.rater, lrmap:S.lrmap, ann };
+  saved = { rater:S.rater, lrmap:S.lrmap, ann, fixed:saved.fixed||{}, fixedSrc:saved.fixedSrc||'' };
   try { localStorage.setItem(STORE_KEY, JSON.stringify(saved)); } catch(e) {}
 }
 function annOf(im){
@@ -191,6 +194,21 @@ function applyAnn(im, a){
   im.anast=a.anast||null; im.paren=a.paren||[]; im.axis=a.axis||null; im.updatedAt=a.updatedAt||null;
   im.hist=[]; im.redo=[]; im.lastSnap=geom(im);
 }
+// ---------- fixed (consensus) anastomosis ----------
+// A consensus anastomosis outline (drawn once while reviewing the video) is loaded per image and locked,
+// so raters only outline exposed parenchyma. Matched by image key (file name|size|WxH), else by file name + size in px.
+function fixedFor(im){
+  const F=saved.fixed||{}; if (F[im.key]) return F[im.key];
+  for (const k in F){ const f=F[k]; if (f.name===im.name && f.w===im.w && f.h===im.h) return f; }
+  return null;
+}
+function applyFixed(im){
+  const f=fixedFor(im); im.fixed=!!f; if(!f) return;
+  im.anast=f.anast.map(p=>p.slice()); im.axis=f.axis? f.axis.map(p=>p.slice()) : null;
+  if (f.caseId) im.caseId=f.caseId;
+  im.lastSnap=geom(im);
+}
+const locked = im => !!(im && im.fixed);
 // ---------- undo / redo (geometry snapshots per image) ----------
 function geom(im){ return JSON.stringify({anast:im.anast, paren:im.paren, axis:im.axis}); }
 function setGeom(im, snap){ const g=JSON.parse(snap); im.anast=g.anast; im.paren=g.paren||[]; im.axis=g.axis; im.lastSnap=snap; }
@@ -222,6 +240,7 @@ async function loadFiles(files){
       const im = { key, name:f.name, w:bmp.width, h:bmp.height, bmp, caseId:'', label:'', note:'', anast:null, paren:[], axis:null, updatedAt:null, hist:[], redo:[], lastSnap:null };
       im.lastSnap=geom(im);
       applyAnn(im, saved.ann && saved.ann[key]);
+      applyFixed(im);
       S.images.push(im); idx = S.images.length-1;
     } else S.images[idx].bmp = bmp;
     select(idx);
@@ -231,6 +250,7 @@ function select(i){
   S.cur=i; S.draft=[]; S.sel=null;
   const im=curImg();
   caseOptions(); $('imgLabel').value=im?im.label:''; $('note').value=im?im.note:'';
+  lockUi();
   fit(); refreshSide(); draw();
 }
 
@@ -254,15 +274,22 @@ for (const [id,k] of [['imgLabel','label'],['note','note']])
 // ---------- modes ----------
 const modeBtns = [...document.querySelectorAll('[data-mode]')];
 modeBtns.forEach(b => b.onclick = () => setMode(b.dataset.mode));
-function setMode(m){ S.mode=m; S.draft=[]; modeBtns.forEach(b=>b.classList.toggle('on', b.dataset.mode===m)); hint(); draw(); }
+function lockUi(){
+  const L=locked(curImg());
+  for (const id of ['mAnast','mAxis','btnClearAxis']) $(id).disabled=L;
+  $('caseId').disabled=L;
+  if (L && (S.mode==='anast'||S.mode==='axis')) setMode('paren');
+}
+function setMode(m){ if (locked(curImg()) && (m==='anast'||m==='axis')) m='paren'; S.mode=m; S.draft=[]; modeBtns.forEach(b=>b.classList.toggle('on', b.dataset.mode===m)); hint(); draw(); }
 $('btnUndo').onclick = undo;
 $('btnRedo').onclick = redo;
 $('btnDelSel').onclick = () => { if(S.sel) deletePoly(S.sel); };
 $('btnClearAll').onclick = () => { const im=curImg(); if(!im) return;
+  if (locked(im)){ if(!confirm('この画像の露出実質をすべて消去しますか？（確定吻合範囲は残ります。「元に戻す」で復元できます）')) return; im.paren=[]; S.draft=[]; S.sel=null; touch(im); return; }
   if(!confirm('この画像の吻合範囲・露出実質・左右軸をすべて消去しますか？（「元に戻す」で復元できます）')) return;
   im.anast=null; im.paren=[]; im.axis=null; S.draft=[]; S.sel=null; touch(im); };
 $('btnFit').onclick = () => { fit(); draw(); };
-$('btnClearAxis').onclick = () => { const im=curImg(); if(im&&im.axis){ im.axis=null; touch(im);} };
+$('btnClearAxis').onclick = () => { const im=curImg(); if(im&&im.axis&&!locked(im)){ im.axis=null; touch(im);} };
 function undo(){
   const im=curImg(); if(!im) return;
   if (S.draft.length){ S.draft=[]; draw(); hint(); return; }   // discard the outline being drawn
@@ -407,6 +434,7 @@ function arrowHead(a,b){ const ang=Math.atan2(b[1]-a[1],b[0]-a[0]), L=12/S.view.
 function closeDraft(){
   const im=curImg(); if(!im) return;
   if (S.mode==='anast' && S.draft.length>=3){
+    if (locked(im)){ S.draft=[]; draw(); return; }
     if (im.anast && !confirm('既存の吻合範囲を置き換えますか？')) { S.draft=[]; draw(); return; }
     im.anast=S.draft; S.draft=[]; touch(im);
   } else if (S.mode==='paren' && S.draft.length>=3){ im.paren.push(S.draft); S.draft=[]; touch(im); }
@@ -415,9 +443,9 @@ function hitVertex(sp){
   const im=curImg(); if(!im) return null; const R=8;
   const test=(arr,t,i)=>{ for(let j=0;j<arr.length;j++){ const q=toScr(arr[j]); if(Math.hypot(q[0]-sp[0],q[1]-sp[1])<=R) return {t,i,j}; } return null; };
   let h=null;
-  if(im.axis && (h=test(im.axis,'axis',0))) return h;
+  if(im.axis && !locked(im) && (h=test(im.axis,'axis',0))) return h;
   for(let i=im.paren.length-1;i>=0;i--) if((h=test(im.paren[i],'paren',i))) return h;
-  if(im.anast && (h=test(im.anast,'anast',0))) return h;
+  if(im.anast && !locked(im) && (h=test(im.anast,'anast',0))) return h;
   return null;
 }
 const getArr = (im,h) => h.t==='anast'? im.anast : h.t==='paren'? im.paren[h.i] : im.axis;
@@ -438,7 +466,7 @@ cv.addEventListener('pointerdown', e => {
     // select polygon
     S.sel=null;
     for(let i=im.paren.length-1;i>=0;i--) if(inPoly(ip,im.paren[i])){ S.sel={t:'paren',i}; break; }
-    if(!S.sel && im.anast && inPoly(ip,im.anast)) S.sel={t:'anast',i:0};
+    if(!S.sel && im.anast && !locked(im) && inPoly(ip,im.anast)) S.sel={t:'anast',i:0};
     refreshSide(); draw(); return;
   }
   if (S.mode==='axis'){
@@ -487,7 +515,7 @@ cv.addEventListener('dblclick', e => {
   }
   if (S.mode==='edit'){
     const sp=evPos(e), ip=toImg(...sp);
-    const polys=[]; if(im.anast) polys.push(im.anast); polys.push(...im.paren);
+    const polys=[]; if(im.anast && !locked(im)) polys.push(im.anast); polys.push(...im.paren);
     let best=null;
     for(const p of polys) for(let j=0;j<p.length;j++){ const a=p[j], b=p[(j+1)%p.length]; const d=segDist(ip,a,b)*S.view.s; if(d<8 && (!best||d<best.d)) best={p,j,d}; }
     if(best){ best.p.splice(best.j+1,0,ip); touch(im); }
@@ -517,7 +545,7 @@ function regionAt(ip){
   const im=curImg(); if(!im) return null;
   const hits=[];
   im.paren.forEach((p,i)=>{ if(inPoly(ip,p)) hits.push({t:'paren',i,a:polyArea(p)}); });
-  if (im.anast && inPoly(ip,im.anast)) hits.push({t:'anast',i:0,a:polyArea(im.anast)});
+  if (im.anast && !locked(im) && inPoly(ip,im.anast)) hits.push({t:'anast',i:0,a:polyArea(im.anast)});
   hits.sort((x,y)=>x.a-y.a);   // smallest (innermost) region first
   return hits;
 }
@@ -545,7 +573,7 @@ window.addEventListener('keydown', e=>{ if(e.key==='Escape') closeMenu(); });
 
 function deletePoly(sel){
   const im=curImg(); if(!im) return;
-  if (sel.t==='anast'){ if(!confirm('吻合範囲を削除しますか？')) return; im.anast=null; }
+  if (sel.t==='anast'){ if(locked(im)) return; if(!confirm('吻合範囲を削除しますか？')) return; im.anast=null; }
   else if (sel.t==='paren') im.paren.splice(sel.i,1);
   S.sel=null; touch(im);
 }
@@ -558,6 +586,7 @@ function refreshList(){
   S.images.forEach((im,i)=>{
     const li=document.createElement('li'); if(i===S.cur) li.className='cur';
     const nm=document.createElement('span'); nm.textContent = (im.caseId? `${im.caseId}${im.label?' / '+im.label:''}` : '(症例未選択)') ; nm.title=im.name;
+    if (im.fixed) nm.textContent += ' 🔒';
     const st=document.createElement('span'); const done=im.anast && im.paren.length && im.caseId;
     st.className='st'+(done?' done':''); st.textContent = done? '計測済' : im.anast? '作図中' : '未計測';
     li.append(nm,st); li.onclick=()=>select(i); ul.append(li);
@@ -572,7 +601,8 @@ function refreshSide(){
       const s=document.createElement('span'); s.innerHTML=`<span class="sw" style="background:${color}"></span>`; s.append(label+`（${fmtA(area)} px²）`);
       const b=document.createElement('button'); b.textContent='削除'; b.onclick=()=>deletePoly(sel);
       li.append(s,b); pl.append(li); };
-    if (im.anast) add('吻合範囲',{t:'anast',i:0},COL.anast,polyArea(im.anast));
+    if (im.anast && locked(im)){ const li=document.createElement('li'); li.innerHTML=`<span><span class="sw" style="background:${COL.anast}"></span>吻合範囲（確定・固定）（${fmtA(polyArea(im.anast))} px²）</span>`; pl.append(li); }
+    else if (im.anast) add('吻合範囲',{t:'anast',i:0},COL.anast,polyArea(im.anast));
     im.paren.forEach((p,i)=>add(`露出実質 ${i+1}`,{t:'paren',i},COL.paren,polyArea(p)));
     if (im.axis){ const li=document.createElement('li'); li.innerHTML=`<span><span class="sw" style="background:${COL.axis}"></span>左右軸 ${axisAngle(im).toFixed(1)}°</span>`; pl.append(li); }
   }
@@ -610,14 +640,15 @@ $('btnCsv').onclick = () => {
       im.paren.length,
       p(r.ratio.L), p(r.ratio.C), p(r.ratio.R), p(r.ratio.LR), p(r.ratio.total),
       Math.round(r.paren.L), Math.round(r.anast.L), Math.round(r.paren.C), Math.round(r.anast.C), Math.round(r.paren.R), Math.round(r.anast.R),
-      Math.round(r.parenTotal), Math.round(r.anastTotal), Math.round(r.outside), im.note, APP_VERSION]);
+      Math.round(r.parenTotal), Math.round(r.anastTotal), Math.round(r.outside), im.note, APP_VERSION,
+      im.fixed? 'fixed' : 'own', im.fixed? (saved.fixedSrc||'') : '']);
   }
   if (!rows.length){ alert('吻合範囲が描かれた画像がありません。'); return; }
   if (miss.length && !confirm(`症例が未選択の画像が ${miss.length} 枚あります。このまま出力しますか？`)) return;
   const head=['rater_id','case_id','image_label','measured_at','image_w','image_h','lr_mapping','axis_angle_deg','n_parenchyma_regions',
     'ratio_L','ratio_C','ratio_R','ratio_LR','ratio_total',
     'paren_px_L','anast_px_L','paren_px_C','anast_px_C','paren_px_R','anast_px_R',
-    'paren_px_total','anast_px_total','paren_px_outside_anast','note','app_version'];
+    'paren_px_total','anast_px_total','paren_px_outside_anast','note','app_version','anast_source','anast_file'];
   const csv='﻿'+[head,...rows].map(r=>r.map(csvCell).join(',')).join('\r\n')+'\r\n';
   dl(`hilar_measure_${S.rater}_${stamp()}.csv`, csv, 'text/csv');
 };
@@ -632,10 +663,30 @@ $('fileJson').onchange = async e => {
   try{
     const d=JSON.parse(await f.text()); let n=0;
     saved.ann = saved.ann||{};
-    for(const a of d.images||[]){ saved.ann[a.key]=a; const im=S.images.find(x=>x.key===a.key); if(im){ applyAnn(im,a); n++; } }
+    for(const a of d.images||[]){ saved.ann[a.key]=a; const im=S.images.find(x=>x.key===a.key); if(im){ applyAnn(im,a); applyFixed(im); n++; } }
     try { localStorage.setItem(STORE_KEY, JSON.stringify(saved)); } catch(_) {}
     alert(`作図データ ${ (d.images||[]).length } 件を読み込みました（開いている画像に反映: ${n} 件）。\n対応する画像を開くと自動で復元されます。`);
     select(S.cur);
+  }catch(err){ alert('読み込みに失敗しました: '+err.message); }
+};
+
+$('btnFixLoad').onclick = () => $('fileFix').click();
+$('fileFix').onchange = async e => {
+  const f=e.target.files[0]; e.target.value=''; if(!f) return;
+  try{
+    const d=JSON.parse(await f.text()); const fixed={}; const ids=[];
+    for (const a of d.images||[]){
+      if (!a.anast || a.anast.length<3) continue;
+      fixed[a.key]={ key:a.key, name:a.name, w:a.w, h:a.h, caseId:a.caseId||'', anast:a.anast, axis:a.axis||null };
+      ids.push(a.caseId||a.name);
+    }
+    if (!ids.length){ alert('吻合範囲を含む画像がありませんでした。'); return; }
+    const had=S.images.some(im=>im.paren.length);
+    if (!confirm(`確定吻合範囲 ${ids.length} 件を読み込み、固定します。\n（${ids.join('、')}）\n\n固定した画像では吻合範囲・左右軸・症例番号は変更できず、露出実質だけを描きます。`+(had?'\n※ すでに描いた露出実質はそのまま残ります。':''))) return;
+    saved.fixed=fixed; saved.fixedSrc=f.name;
+    let n=0; for (const im of S.images){ applyFixed(im); if(im.fixed){ im.hist=[]; im.redo=[]; n++; } }
+    persist(); alert(`読み込みました（開いている画像に反映: ${n} 件）。対応する画像を開くと自動で固定されます。`);
+    if (S.cur>=0) select(S.cur); else refreshSide();
   }catch(err){ alert('読み込みに失敗しました: '+err.message); }
 };
 
