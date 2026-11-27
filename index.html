@@ -258,7 +258,7 @@ function select(i){
 $('rater').oninput = e => { S.rater=e.target.value.trim(); persist(); };
 $('lrmap').onchange = e => { S.lrmap=e.target.value; persist(); refreshSide(); draw(); };
 // case selector: 症例01, 02, ... = operations numbered in order (redo surgeries get their own number)
-const CASE_MAX = 18;   // 18 operations as of 2026-11-22; raise when cases are added
+const CASE_MAX = 30;   // dropdown lists 症例01..30 (18 operations + spare/added images as of 2026-11-27); raise if more are needed
 function caseOptions(){
   const sel=$('caseId'), im=curImg(), cur=im?im.caseId:'';
   const used=new Set(S.images.filter(x=>x!==im && x.caseId && x.anast).map(x=>x.caseId));
