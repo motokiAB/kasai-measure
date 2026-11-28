@@ -51,6 +51,15 @@ th,td{border-bottom:1px solid var(--line);padding:3px 4px;text-align:right}
 th:first-child,td:first-child{text-align:left}
 .muted{color:var(--muted);font-size:12.5px}
 .warn{color:var(--warn);font-size:12.5px}
+.cons-only{display:none} body.consensus .cons-only{display:revert} body.consensus .norm-only{display:none}
+#consBadge{background:var(--warn);color:#fff;border-radius:4px;padding:2px 8px;font-size:12.5px}
+#refList{list-style:none;margin:6px 0 0;padding:0;display:flex;flex-direction:column;gap:4px}
+#refList li{display:flex;align-items:center;gap:6px;font-size:13px}
+#refList input[type=color]{width:28px;height:22px;padding:0;border:1px solid var(--line);border-radius:4px;background:none}
+#refList .fn{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px}
+#adoptRow button{font-size:12.5px}
+#refTable{width:100%;margin-top:6px}
+label.ck{display:inline-flex;gap:4px;align-items:center;color:var(--muted);font-size:13px}
 .sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:4px;vertical-align:-1px}
 #polyList{margin:4px 0 0;padding-left:0;list-style:none;font-size:13px}
 #polyList li{display:flex;justify-content:space-between;align-items:center;padding:2px 0}
@@ -70,6 +79,7 @@ th:first-child,td:first-child{text-align:left}
 <body>
 <header>
   <h1>肝門部 実質露出率 計測</h1>
+  <span id="consBadge" class="cons-only">合議モード</span>
   <label>計測者ID <input type="text" id="rater" placeholder="例: A" size="6"></label>
   <label>左右の対応
     <select id="lrmap">
@@ -82,6 +92,8 @@ th:first-child,td:first-child{text-align:left}
     <button id="btnJson">作図データ保存</button>
     <button id="btnJsonLoad">作図データ読込</button>
     <a href="compare.html" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px">比較表示（別ページ）</a>
+    <a class="norm-only" href="index.html?consensus=1" target="_blank" rel="noopener" style="color:var(--accent);font-size:13px" title="2名の作図を重ねて見ながら、合議で露出実質を決めて保存します">合議モード（別ページ）</a>
+    <a class="cons-only" href="index.html" style="color:var(--accent);font-size:13px">通常の計測へ</a>
     <button id="btnFixLoad" title="合議で確定した吻合範囲（作図データ保存で作ったJSON）を読み込み、固定します">確定吻合範囲を読込（固定）</button>
   </span>
 </header>
@@ -103,6 +115,18 @@ th:first-child,td:first-child{text-align:left}
         <span>画像ラベル</span><input type="text" id="imgLabel" placeholder="例: 1枚目">
         <span>メモ</span><input type="text" id="note" placeholder="任意">
       </div>
+    </section>
+    <section class="cons-only" id="secCons">
+      <h2>合議：測定者の作図を参照</h2>
+      <div class="row">
+        <button id="btnRefLoad">測定者の作図データを読込（A・B）</button>
+        <label class="ck"><input type="checkbox" id="ckRef" checked>参照を表示</label>
+      </div>
+      <ul id="refList"></ul>
+      <p class="muted" id="refNone" style="margin:4px 0 0">各測定者が「作図データ保存」したJSONを読み込むと、破線で重ねて表示します（複数選択可）。</p>
+      <div id="refCase"></div>
+      <div class="row" id="adoptRow" style="margin-top:6px"></div>
+      <p class="muted" style="margin:6px 0 0">「採用」でその測定者の露出実質をこの症例の合議結果として写し、そのまま「露出実質」「頂点の修正」で直せます（「元に戻す」可）。採用元と修正の有無は CSV の consensus_source 列に記録されます。</p>
     </section>
     <section>
       <h2>3. 作図</h2>
@@ -144,6 +168,7 @@ th:first-child,td:first-child{text-align:left}
         <li>ホイールで拡大縮小、右ドラッグ／スペース＋ドラッグで移動。</li>
         <li>作業内容（座標のみ）はこのブラウザに自動保存されます。別のPCへ移すときは「作図データ保存」。</li>
         <li><b>再計測（吻合範囲を固定する方式）</b>：合議で描いた吻合範囲を「作図データ保存」したJSONを、各測定者が「確定吻合範囲を読込（固定）」で読み込みます。画像を開くと吻合範囲・左右軸・症例番号が固定され（一覧に🔒）、露出実質だけを描けます。</li>
+        <li><b>合議モード</b>（上の「合議モード（別ページ）」）：確定吻合範囲と各測定者の作図データ（A・B）を読み込み、破線で重ねた2名の判定を見ながら、症例ごとに「Aを採用」「Bを採用」「A＋B（和）を採用」で写してから直します。計測者IDは C。保存先はこのブラウザ内で通常の計測とは別なので、測定者自身の作業データは上書きされません。</li>
       </ol>
     </section>
   </aside>
@@ -157,12 +182,18 @@ th:first-child,td:first-child{text-align:left}
 <input type="file" id="fileImg" accept="image/*" multiple hidden>
 <input type="file" id="fileJson" accept="application/json,.json" hidden>
 <input type="file" id="fileFix" accept="application/json,.json" hidden>
+<input type="file" id="fileRef" accept="application/json,.json" multiple hidden>
 
 <script>
 (() => {
 'use strict';
-const APP_VERSION = '1.1';
-const STORE_KEY = 'kasaiHilarMeasure.v1';
+const APP_VERSION = '1.2';
+// ?consensus=1 opens the consensus mode: two raters review A/B outlines together and save the agreed parenchyma (rater "C").
+// It keeps its own browser storage so a rater's own work on the same PC is never overwritten.
+const CONSENSUS = new URLSearchParams(location.search).has('consensus');
+const STORE_KEY = CONSENSUS ? 'kasaiHilarMeasure.consensus.v1' : 'kasaiHilarMeasure.v1';
+const REF_COLORS = ['#ff8c42','#c77dff','#7bd389','#ff5d8f'];
+if (CONSENSUS){ document.body.classList.add('consensus'); document.title='合議モード｜肝門部 実質露出率 計測'; }
 const COL = { anast:'#38c6f4', paren:'#ffd23f', axis:'#ff6bd6', draft:'#ffffff', third:'#ffffff' };
 const $ = id => document.getElementById(id);
 const cv = $('cv'), ctx = cv.getContext('2d');
@@ -172,11 +203,12 @@ const S = {
   rater:'', lrmap:'imgLeft=patRight',
   images:[],   // {key,name,w,h,bmp,caseId,label,note,anast,paren:[],axis,updatedAt}
   cur:-1, mode:'anast', draft:[], hover:null,
-  view:{s:1,ox:0,oy:0}, sel:null, drag:null, space:false
+  view:{s:1,ox:0,oy:0}, sel:null, drag:null, space:false,
+  refs:[], showRef:true   // consensus mode: [{id,file,color,show,items}]
 };
 let saved = { rater:'', lrmap:'imgLeft=patRight', ann:{}, fixed:{}, fixedSrc:'' };
 try { const t = localStorage.getItem(STORE_KEY); if (t) saved = Object.assign(saved, JSON.parse(t)); } catch(e) {}
-S.rater = saved.rater || ''; S.lrmap = saved.lrmap || S.lrmap;
+S.rater = saved.rater || (CONSENSUS?'C':''); S.lrmap = saved.lrmap || S.lrmap;
 $('rater').value = S.rater; $('lrmap').value = S.lrmap;
 
 function persist(){
@@ -187,12 +219,13 @@ function persist(){
 }
 function annOf(im){
   return { name:im.name, w:im.w, h:im.h, caseId:im.caseId, label:im.label, note:im.note,
-           anast:im.anast, paren:im.paren, axis:im.axis, updatedAt:im.updatedAt };
+           anast:im.anast, paren:im.paren, axis:im.axis, updatedAt:im.updatedAt,
+           ...(im.adopt? {adopt:im.adopt} : {}) };
 }
 function applyAnn(im, a){
   if (!a) return;
   im.caseId=a.caseId||''; im.label=a.label||''; im.note=a.note||'';
-  im.anast=a.anast||null; im.paren=a.paren||[]; im.axis=a.axis||null; im.updatedAt=a.updatedAt||null;
+  im.anast=a.anast||null; im.paren=a.paren||[]; im.axis=a.axis||null; im.updatedAt=a.updatedAt||null; im.adopt=a.adopt||null;
   im.hist=[]; im.redo=[]; im.lastSnap=geom(im);
 }
 // ---------- fixed (consensus) anastomosis ----------
@@ -389,6 +422,13 @@ function draw(){
   else { ctx.fillStyle='#333'; ctx.fillRect(0,0,im.w,im.h); }
   const lw = 1.6/S.view.s;
   const poly = (p,close=true) => { ctx.beginPath(); p.forEach((q,i)=> i? ctx.lineTo(q[0],q[1]) : ctx.moveTo(q[0],q[1])); if(close) ctx.closePath(); };
+  // consensus mode: other raters' parenchyma as dashed lines underneath
+  if (CONSENSUS && S.showRef){
+    ctx.save(); ctx.setLineDash([8/S.view.s, 5/S.view.s]);
+    S.refs.forEach(r=>{ if(!r.show) return; const a=refOf(r,im); if(!a) return;
+      ctx.strokeStyle=r.color; ctx.lineWidth=lw*1.4; (a.paren||[]).forEach(p=>{ if(p.length>=3){ poly(p); ctx.stroke(); } }); });
+    ctx.restore();
+  }
   // parenchyma
   im.paren.forEach((p,i) => { poly(p); ctx.lineWidth=lw*(S.sel&&S.sel.t==='paren'&&S.sel.i===i?2.6:1.3); ctx.strokeStyle=COL.paren; ctx.stroke(); });
   // anastomosis + thirds
@@ -607,6 +647,7 @@ function refreshSide(){
     im.paren.forEach((p,i)=>add(`露出実質 ${i+1}`,{t:'paren',i},COL.paren,polyArea(p)));
     if (im.axis){ const li=document.createElement('li'); li.innerHTML=`<span><span class="sw" style="background:${COL.axis}"></span>左右軸 ${axisAngle(im).toFixed(1)}°</span>`; pl.append(li); }
   }
+  if (CONSENSUS) refreshCons();
   const r=measure(im), box=$('result');
   if (!r){ box.className='muted'; box.textContent='吻合範囲を描くと計算されます。'; return; }
   box.className='';
@@ -642,7 +683,7 @@ $('btnCsv').onclick = () => {
       p(r.ratio.L), p(r.ratio.C), p(r.ratio.R), p(r.ratio.LR), p(r.ratio.total),
       Math.round(r.paren.L), Math.round(r.anast.L), Math.round(r.paren.C), Math.round(r.anast.C), Math.round(r.paren.R), Math.round(r.anast.R),
       Math.round(r.parenTotal), Math.round(r.anastTotal), Math.round(r.outside), im.note, APP_VERSION,
-      im.fixed? 'fixed' : 'own', im.fixed? (saved.fixedSrc||'') : '']);
+      im.fixed? 'fixed' : 'own', im.fixed? (saved.fixedSrc||'') : '', ...(CONSENSUS? [consSource(im)] : [])]);
   }
   if (!rows.length){ alert('吻合範囲が描かれた画像がありません。'); return; }
   if (miss.length && !confirm(`症例が未選択の画像が ${miss.length} 枚あります。このまま出力しますか？`)) return;
@@ -650,6 +691,7 @@ $('btnCsv').onclick = () => {
     'ratio_L','ratio_C','ratio_R','ratio_LR','ratio_total',
     'paren_px_L','anast_px_L','paren_px_C','anast_px_C','paren_px_R','anast_px_R',
     'paren_px_total','anast_px_total','paren_px_outside_anast','note','app_version','anast_source','anast_file'];
+  if (CONSENSUS) head.push('consensus_source');
   const csv='﻿'+[head,...rows].map(r=>r.map(csvCell).join(',')).join('\r\n')+'\r\n';
   dl(`hilar_measure_${S.rater}_${stamp()}.csv`, csv, 'text/csv');
 };
@@ -690,6 +732,68 @@ $('fileFix').onchange = async e => {
     if (S.cur>=0) select(S.cur); else refreshSide();
   }catch(err){ alert('読み込みに失敗しました: '+err.message); }
 };
+
+// ---------- consensus mode ----------
+const sameImg=(a,b)=> a.key===b.key || (a.name===b.name && a.w===b.w && a.h===b.h);
+const refOf=(r,im)=> r.items.find(a=>sameImg(a,im)) || null;
+const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const parenKey=p=>JSON.stringify(p||[]);
+// "A", "B", "A+B" as adopted; "+修正" when edited afterwards; "独自作図" when drawn from scratch
+function consSource(im){
+  if (!im.paren.length) return '';
+  if (!im.adopt) return '独自作図';
+  return im.adopt.src + (parenKey(im.paren)===im.adopt.snap ? '' : '+修正');
+}
+$('btnRefLoad').onclick = () => $('fileRef').click();
+$('ckRef').onchange = e => { S.showRef=e.target.checked; draw(); };
+$('fileRef').onchange = async e => {
+  const files=[...e.target.files]; e.target.value='';
+  for (const f of files){
+    let d; try{ d=JSON.parse(await f.text()); }catch(err){ alert('JSONを読めませんでした: '+f.name); continue; }
+    const items=(d.images||[]).filter(a=>a && a.w && a.h && a.paren && a.paren.length);
+    if (!items.length){ alert('露出実質が入っていません（確定吻合範囲のファイルかもしれません）: '+f.name); continue; }
+    const id=(d.rater||'').trim() || (f.name.match(/hilar_annotations_([^_]+)_/)||[])[1] || String.fromCharCode(65+S.refs.length);
+    const old=S.refs.findIndex(r=>r.id===id);
+    const r={ id, file:f.name, items, show:true, color: old>=0? S.refs[old].color : REF_COLORS[S.refs.length%REF_COLORS.length] };
+    if (old>=0) S.refs[old]=r; else S.refs.push(r);
+  }
+  refreshSide(); draw();
+};
+function adopt(ids){
+  const im=curImg(); if(!im) return;
+  const polys=[]; for (const id of ids){ const r=S.refs.find(x=>x.id===id); const a=r&&refOf(r,im); if(a) (a.paren||[]).forEach(p=>polys.push(p.map(q=>q.slice()))); }
+  if (!polys.length){ alert('この症例の露出実質が見つかりません。'); return; }
+  if (im.paren.length && !confirm('この症例の今の露出実質を置き換えます（「元に戻す」で戻せます）。よろしいですか？')) return;
+  im.paren=polys; S.sel=null; S.draft=[];
+  im.adopt={ src:ids.join('+'), at:new Date().toISOString(), snap:parenKey(polys) };
+  if (S.mode!=='paren' && S.mode!=='edit') setMode('edit');
+  touch(im);
+}
+function refreshCons(){
+  const ul=$('refList'); ul.innerHTML=''; $('refNone').style.display=S.refs.length?'none':'block';
+  S.refs.forEach((r,i)=>{
+    const li=document.createElement('li');
+    const ck=document.createElement('input'); ck.type='checkbox'; ck.checked=r.show; ck.title='表示'; ck.onchange=()=>{ r.show=ck.checked; draw(); };
+    const col=document.createElement('input'); col.type='color'; col.value=r.color; col.oninput=()=>{ r.color=col.value; draw(); };
+    const nm=document.createElement('b'); nm.textContent=r.id;
+    const fn=document.createElement('span'); fn.className='fn'; fn.textContent=r.file; fn.title=r.file;
+    const del=document.createElement('button'); del.textContent='外す'; del.onclick=()=>{ S.refs.splice(i,1); refreshSide(); draw(); };
+    li.append(ck,col,nm,fn,del); ul.append(li);
+  });
+  const im=curImg(), box=$('refCase'), row=$('adoptRow'); box.innerHTML=''; row.innerHTML='';
+  if (!im || !S.refs.length) return;
+  const have=S.refs.filter(r=>refOf(r,im));
+  const f=v=>v==null?'–':(v*100).toFixed(1)+'%';
+  const line=(label,color,paren)=>{ const m=measure({...im, paren}); return `<tr><td><span class="sw" style="background:${color}"></span>${esc(label)}</td>`+(m?['L','C','R','LR','total'].map(k=>`<td>${f(m.ratio[k])}</td>`).join(''):'<td colspan="5">–</td>')+'</tr>'; };
+  let html='<table id="refTable"><tr><th></th><th>左</th><th>中央</th><th>右</th><th>左右</th><th>全体</th></tr>';
+  have.forEach(r=>{ html+=line(r.id,r.color,refOf(r,im).paren||[]); });
+  html+=line('合議（今）',COL.paren,im.paren)+'</table>';
+  const src=consSource(im); html+=`<p class="muted" style="margin:4px 0 0">採用元：${src? esc(src) : '未決定'}</p>`;
+  if (!have.length) html='<p class="warn">この画像に対応する参照の作図がありません。</p>';
+  box.innerHTML=html;
+  have.forEach(r=>{ const b=document.createElement('button'); b.textContent=r.id+'を採用'; b.onclick=()=>adopt([r.id]); row.append(b); });
+  if (have.length>=2){ const b=document.createElement('button'); b.textContent=have.map(r=>r.id).join('＋')+'（和）を採用'; b.title='両者が描いた範囲をすべて含めます（重なりは1回だけ数えます）'; b.onclick=()=>adopt(have.map(r=>r.id)); row.append(b); }
+}
 
 // ---------- init ----------
 setMode('anast'); resize(); refreshSide();
